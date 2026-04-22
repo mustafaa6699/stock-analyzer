@@ -1,258 +1,166 @@
 import { useState, useRef, useEffect } from "react";
-import {
-  LineChart, Line, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ResponsiveContainer
-} from "recharts";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
 
 const C = {
-  green:"#10b981", green2:"#34d399",
-  red:"#ef4444",   red2:"#f87171",
-  blue:"#3b82f6",  blue2:"#60a5fa",
-  purple:"#8b5cf6",amber:"#f59e0b",
-  bg:"#0a0e1a",    bg2:"#1e293b",
-  bg3:"#0f172a",   bg4:"#334155",
-  text:"#e2e8f0",  text2:"#94a3b8", text3:"#64748b",
+  green:"#10b981",green2:"#34d399",red:"#ef4444",red2:"#f87171",
+  blue:"#3b82f6",blue2:"#60a5fa",purple:"#8b5cf6",amber:"#f59e0b",
+  bg:"#0a0e1a",bg2:"#1e293b",bg3:"#0f172a",bg4:"#334155",
+  text:"#e2e8f0",text2:"#94a3b8",text3:"#64748b",
 };
 
-const fmt = (n, d=2) => {
-  const x = parseFloat(n);
-  return isNaN(x) ? "—" : x.toLocaleString("en", {minimumFractionDigits:d, maximumFractionDigits:d});
-};
+const fmt = (n,d=2) => { const x=parseFloat(n); return isNaN(x)?"—":x.toLocaleString("en",{minimumFractionDigits:d,maximumFractionDigits:d}); };
 
-const calcRSI = (closes, period=14) => {
-  if (closes.length < period+1) return closes.map(()=>50);
-  const rsi = []; let ag=0, al=0;
-  for (let i=1; i<=period; i++) { const d=closes[i]-closes[i-1]; d>0?ag+=d:al-=d; }
-  ag/=period; al/=period;
+const calcRSI = (closes,period=14) => {
+  if(closes.length<period+1) return closes.map(()=>50);
+  const rsi=[];let ag=0,al=0;
+  for(let i=1;i<=period;i++){const d=closes[i]-closes[i-1];d>0?ag+=d:al-=d;}
+  ag/=period;al/=period;
   rsi.push(al===0?100:100-(100/(1+ag/al)));
-  for (let i=period+1; i<closes.length; i++) {
+  for(let i=period+1;i<closes.length;i++){
     const d=closes[i]-closes[i-1];
     ag=((ag*(period-1))+(d>0?d:0))/period;
     al=((al*(period-1))+(d<0?-d:0))/period;
     rsi.push(al===0?100:100-(100/(1+ag/al)));
   }
-  return [...Array(closes.length-rsi.length).fill(50), ...rsi];
+  return [...Array(closes.length-rsi.length).fill(50),...rsi];
 };
 
-// جلب بيانات حقيقية عبر Vercel API (يتجاوز CORS)
 async function fetchMarketData(symbol) {
-  const url = `/api/stock?symbol=${symbol}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const e = await res.json();
-    throw new Error(e.error || `لم نتمكن من جلب بيانات ${symbol}`);
-  }
-  return await res.json();
+  const res = await fetch(`/api/stock?symbol=${symbol}`);
+  if(!res.ok){const e=await res.json();throw new Error(e.error||`لم نتمكن من جلب بيانات ${symbol}`);}
+  return res.json();
 }
 
-const STEPS = [
-  "① جلب السعر الحقيقي من السوق 📡",
-  "② تحليل بيانات الأسعار التاريخية",
-  "③ حساب المؤشرات الفنية",
-  "④ إعداد توصية الخبير بالذكاء الاصطناعي",
-];
-
-function Card({ children, mb=0, style={} }) {
-  return <div style={{background:C.bg2,border:"1px solid rgba(99,179,237,0.12)",borderRadius:16,padding:"16px 18px",marginBottom:mb,...style}}>{children}</div>;
+function safeJSON(raw) {
+  let s = raw.replace(/```json|```/g,"").trim();
+  const m = s.match(/\{[\s\S]*\}/);
+  if(!m) throw new Error("no JSON");
+  s = m[0];
+  // Remove single-line comments
+  s = s.replace(/\/\/[^\n\r]*/g,"");
+  // Remove Arabic text inside arrays (common Claude mistake)
+  s = s.replace(/\[\s*[^\[\]"0-9\-\.true false,\s][^\[\]]*\]/g,"[]");
+  // Fix trailing commas
+  s = s.replace(/,(\s*[}\]])/g,"$1");
+  return JSON.parse(s);
 }
-function Lbl({ children }) {
-  return <div style={{fontSize:12,color:C.text2,marginBottom:6,fontWeight:500}}>{children}</div>;
-}
-const iStyle = {width:"100%",padding:"10px 14px",background:C.bg3,border:"1px solid rgba(99,179,237,0.15)",borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,outline:"none"};
 
-export default function App() {
-  const [apiKey,    setApiKey]    = useState(() => localStorage.getItem("anthropic_key") || "");
-  const [symbol,    setSymbol]    = useState("");
-  const [strategy,  setStrategy]  = useState("auto");
-  const [loading,   setLoading]   = useState(false);
-  const [loadStep,  setLoadStep]  = useState(0);
-  const [loadMsg,   setLoadMsg]   = useState("");
-  const [error,     setError]     = useState("");
-  const [data,      setData]      = useState(null);
-  const [chartMode, setChartMode] = useState("price");
-  const [keySaved,  setKeySaved]  = useState(!!localStorage.getItem("anthropic_key"));
-  const resultsRef = useRef(null);
-  const timerRef   = useRef(null);
+const STEPS=["① جلب السعر الحقيقي من السوق","② تحليل البيانات التاريخية","③ حساب المؤشرات الفنية","④ إعداد توصية الخبير"];
 
-  useEffect(() => {
-    if (loading) {
-      setLoadStep(0);
-      timerRef.current = setInterval(() => setLoadStep(s => (s+1)%5), 900);
-    } else clearInterval(timerRef.current);
-    return () => clearInterval(timerRef.current);
-  }, [loading]);
+function Card({children,mb=0,style={}}){return <div style={{background:C.bg2,border:"1px solid rgba(99,179,237,0.12)",borderRadius:16,padding:"16px 18px",marginBottom:mb,...style}}>{children}</div>;}
+function Lbl({children}){return <div style={{fontSize:12,color:C.text2,marginBottom:6,fontWeight:500}}>{children}</div>;}
+const iStyle={width:"100%",padding:"10px 14px",background:C.bg3,border:"1px solid rgba(99,179,237,0.15)",borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:14,outline:"none"};
 
-  useEffect(() => {
-    if (data && resultsRef.current)
-      setTimeout(() => resultsRef.current.scrollIntoView({behavior:"smooth",block:"start"}), 150);
-  }, [data]);
+export default function App(){
+  const [apiKey,setApiKey]=useState(()=>localStorage.getItem("ak")||"");
+  const [symbol,setSymbol]=useState("");
+  const [strategy,setStrategy]=useState("auto");
+  const [loading,setLoading]=useState(false);
+  const [stepIdx,setStepIdx]=useState(0);
+  const [loadMsg,setLoadMsg]=useState("");
+  const [error,setError]=useState("");
+  const [data,setData]=useState(null);
+  const [chartMode,setChartMode]=useState("price");
+  const [keySaved,setKeySaved]=useState(!!localStorage.getItem("ak"));
+  const resultsRef=useRef(null);
+  const timerRef=useRef(null);
 
-  const saveKey = () => { localStorage.setItem("anthropic_key", apiKey); setKeySaved(true); };
-  const clearKey = () => { localStorage.removeItem("anthropic_key"); setApiKey(""); setKeySaved(false); };
+  useEffect(()=>{
+    if(loading){setStepIdx(0);timerRef.current=setInterval(()=>setStepIdx(s=>(s+1)%5),900);}
+    else clearInterval(timerRef.current);
+    return()=>clearInterval(timerRef.current);
+  },[loading]);
 
-  async function analyze() {
-    if (!apiKey.trim()) { setError("أدخل مفتاح Anthropic API أولاً"); return; }
-    if (!symbol.trim()) { setError("أدخل رمز السهم"); return; }
-    setError(""); setData(null); setLoading(true);
-    const sym = symbol.trim().toUpperCase();
+  useEffect(()=>{
+    if(data&&resultsRef.current) setTimeout(()=>resultsRef.current.scrollIntoView({behavior:"smooth",block:"start"}),150);
+  },[data]);
 
-    try {
-      // ── الخطوة 1: جلب البيانات الحقيقية ──
-      setLoadMsg("جاري جلب السعر الحقيقي من السوق...");
-      const mkt = await fetchMarketData(sym);
+  const saveKey=()=>{localStorage.setItem("ak",apiKey);setKeySaved(true);};
+  const clearKey=()=>{localStorage.removeItem("ak");setApiKey("");setKeySaved(false);};
 
-      const closes   = mkt.prices.map(p => p.close);
-      const rsiArr   = calcRSI(closes);
-      const curRSI   = rsiArr[rsiArr.length-1];
-      const ma20     = closes.slice(-20).reduce((a,b)=>a+b,0) / Math.min(20, closes.length);
-      const ma50     = closes.slice(-50).reduce((a,b)=>a+b,0) / Math.min(50, closes.length);
-      const chg      = mkt.currentPrice - mkt.previousClose;
-      const chgPct   = (chg / mkt.previousClose * 100);
+  async function analyze(){
+    if(!apiKey.trim()){setError("أدخل مفتاح Anthropic API");return;}
+    if(!symbol.trim()){setError("أدخل رمز السهم");return;}
+    setError("");setData(null);setLoading(true);
+    const sym=symbol.trim().toUpperCase();
+    try{
+      setLoadMsg("جاري جلب السعر الحقيقي...");
+      const mkt=await fetchMarketData(sym);
+      const closes=mkt.prices.map(p=>p.close);
+      const rsiArr=calcRSI(closes);
+      const curRSI=rsiArr[rsiArr.length-1];
+      const ma20=closes.slice(-20).reduce((a,b)=>a+b,0)/Math.min(20,closes.length);
+      const ma50=closes.slice(-50).reduce((a,b)=>a+b,0)/Math.min(50,closes.length);
+      const chg=mkt.currentPrice-mkt.previousClose;
+      const chgPct=(chg/mkt.previousClose*100);
 
-      // ── الخطوة 2: إرسال للـ Claude ──
-      setLoadMsg("Claude يحلل البيانات الحقيقية...");
+      setLoadMsg("Claude يحلل البيانات...");
 
-      const prompt = `أنت خبير تداول محترف. إليك بيانات حقيقية لسهم ${mkt.symbol} (${mkt.companyName}):
+      // ── Prompt مبسط بالكامل بدون مصفوفات ──
+      const strat=strategy==="auto"?"choose the best strategy based on data":strategy;
+      const prompt=`You are an expert stock trader. Analyze ${sym} (${mkt.companyName}) with this REAL data:
+Price: ${mkt.currentPrice} | Change: ${chg.toFixed(2)} (${chgPct.toFixed(2)}%)
+High: ${mkt.dayHigh} | Low: ${mkt.dayLow} | 52w High: ${mkt.weekHigh52} | 52w Low: ${mkt.weekLow52}
+Volume: ${mkt.volumeM}M | MA20: ${ma20.toFixed(2)} | MA50: ${ma50.toFixed(2)} | RSI: ${curRSI.toFixed(1)}
+Strategy: ${strat}
 
-السعر الحقيقي الحالي: ${mkt.currentPrice} ${mkt.currency}
-التغيير اليوم: ${chg.toFixed(2)} (${chgPct.toFixed(2)}%)
-أعلى اليوم: ${mkt.dayHigh} | أدنى اليوم: ${mkt.dayLow}
-أعلى 52 أسبوع: ${mkt.weekHigh52} | أدنى 52 أسبوع: ${mkt.weekLow52}
-حجم التداول: ${mkt.volumeM} مليون سهم
-آخر ${closes.length} إغلاق: ${closes.slice(-10).map(p=>p.toFixed(2)).join(", ")}
-MA20: ${ma20.toFixed(2)} | MA50: ${ma50.toFixed(2)}
-RSI الحالي: ${curRSI.toFixed(1)}
+Reply with ONLY valid JSON, no comments, no text outside JSON:
+{"direction":"long","strategyNameAr":"سوينج","entryPrice":0.00,"entryDesc":"reason","stopLoss":0.00,"stopDesc":"reason","target1":0.00,"target1Desc":"reason","target2":0.00,"target2Desc":"reason","rsiStatus":"محايد","volumeStatus":"متوسط","trendDirection":"صاعد","trendStrength":"متوسط","riskLevel":"متوسط","riskPct":50,"macdBull":true,"bollingerPos":"middle","stochastic":55,"adx":25,"nextEarnings":"date or unknown","hasNews":false,"newsDesc":"","expertAnalysis":"5 sentence analysis in Arabic based on real data above"}`;
 
-الاستراتيجية: ${strategy==="auto"?"اختر الأنسب بناءً على البيانات":strategy}
-
-بناءً على هذه البيانات الحقيقية، أعطني تحليلاً فنياً شاملاً. أجب بـ JSON فقط بدون أي نص خارجه:
-{
-  "strategyUsed":"swing",
-  "strategyNameAr":"سوينج",
-  "direction":"long",
-  "entryPrice":0.00,
-  "entryDesc":"سبب الدخول",
-  "stopLoss":0.00,
-  "stopDesc":"سبب الوقف",
-  "target1":0.00,
-  "target1Desc":"سبب الهدف الأول",
-  "target2":0.00,
-  "target2Desc":"سبب الهدف الثاني",
-  "rsiStatus":"محايد",
-  "volumeStatus":"متوسط",
-  "trendDirection":"صاعد",
-  "trendStrength":"متوسط",
-  "riskLevel":"متوسط",
-  "riskPct":50,
-  "nextEarnings":"التاريخ أو غير محدد",
-  "macdSignal":"bull",
-  "bollingerSignal":"neutral",
-  "stochasticValue":"50",
-  "stochasticSignal":"neutral",
-  "atrValue":"0.00",
-  "adxValue":"25",
-  "adxSignal":"bull",
-  "expertAnalysis":"تحليل مفصل 5 جمل بناءً على البيانات الحقيقية أعلاه"
-}`;
-
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey.trim(),
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1200,
-          messages: [{ role:"user", content:prompt }]
-        })
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":apiKey.trim(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})
       });
+      if(!res.ok){const e=await res.json();throw new Error(e.error?.message||"API error");}
+      const d=await res.json();
+      const raw=d.content.map(i=>i.text||"").join("");
+      const analysis=safeJSON(raw);
 
-      if (!res.ok) {
-        const e = await res.json();
-        const msg = e.error?.message || "خطأ";
-        if (msg.includes("API_KEY") || msg.includes("invalid"))
-          throw new Error("مفتاح API غير صحيح.");
-        throw new Error(msg);
-      }
-
-      const d   = await res.json();
-      const raw = d.content.map(i => i.text||"").join("");
-      let jsonStr = raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/)?.[0];
-      if (!jsonStr) throw new Error("تعذّر تحليل البيانات. حاول مرة أخرى.");
-
-      // تنظيف JSON من أي نصوص عربية
-      jsonStr = jsonStr.replace(/\/\/[^\n]*/g,"");
-      jsonStr = jsonStr.replace(/\[([^\[\]]*([؀-ۿ])[^\[\]]*)\]/g,"[]");
-      jsonStr = jsonStr.replace(/,\s*([}\]])/g,"$1");
-
-      let analysis;
-      try { analysis = JSON.parse(jsonStr); }
-      catch(e) {
-        jsonStr = jsonStr.replace(/:\s*\[[^\]]*[؀-ۿ][^\]]*\]/g,": []");
-        try { analysis = JSON.parse(jsonStr); }
-        catch(e2) { throw new Error("تعذّر تحليل البيانات. حاول مرة أخرى."); }
-      }
-
-      // بناء المؤشرات من القيم المحسوبة مباشرة
-      const indicators = [
-        {name:"MA 20",     value:"$"+ma20.toFixed(2),   signal: mkt.currentPrice > ma20 ? "bull" : "bear"},
-        {name:"MA 50",     value:"$"+ma50.toFixed(2),   signal: mkt.currentPrice > ma50 ? "bull" : "bear"},
-        {name:"RSI (14)",  value:curRSI.toFixed(1),     signal: curRSI > 70 ? "bear" : curRSI < 30 ? "bull" : "neutral"},
-        {name:"MACD",      value:analysis.macdSignal==="bull"?"+إيجابي":"-سلبي", signal: analysis.macdSignal||"neutral"},
-        {name:"Bollinger", value:analysis.bollingerSignal==="bull"?"أعلى":analysis.bollingerSignal==="bear"?"أسفل":"وسط", signal: analysis.bollingerSignal||"neutral"},
-        {name:"Stochastic",value:String(analysis.stochasticValue||"50"), signal: analysis.stochasticSignal||"neutral"},
-        {name:"ATR",       value:String(analysis.atrValue||"—"), signal:"neutral"},
-        {name:"ADX",       value:String(analysis.adxValue||"—"), signal: analysis.adxSignal||"neutral"},
+      // بناء المؤشرات من القيم الحقيقية
+      const indicators=[
+        {name:"MA 20",   value:"$"+ma20.toFixed(2),  signal:mkt.currentPrice>ma20?"bull":"bear"},
+        {name:"MA 50",   value:"$"+ma50.toFixed(2),  signal:mkt.currentPrice>ma50?"bull":"bear"},
+        {name:"RSI (14)",value:curRSI.toFixed(1),    signal:curRSI>70?"bear":curRSI<30?"bull":"neutral"},
+        {name:"MACD",    value:analysis.macdBull?"إيجابي":"سلبي",    signal:analysis.macdBull?"bull":"bear"},
+        {name:"Bollinger",value:analysis.bollingerPos==="upper"?"أعلى":analysis.bollingerPos==="lower"?"أسفل":"وسط", signal:analysis.bollingerPos==="upper"?"bull":analysis.bollingerPos==="lower"?"bear":"neutral"},
+        {name:"Stochastic",value:String(analysis.stochastic||50),  signal:(analysis.stochastic||50)>80?"bear":(analysis.stochastic||50)<20?"bull":"neutral"},
+        {name:"ADX",     value:String(analysis.adx||25),           signal:(analysis.adx||25)>25?"bull":"neutral"},
+        {name:"السوق",   value:chgPct>=0?"+"+fmt(chgPct)+"%":fmt(chgPct)+"%", signal:chgPct>=0?"bull":"bear"},
       ];
 
-      setData({ ...analysis, indicators, mkt, closes, rsiArr });
-
-      } catch(err) {
-      setError(err.message || "حدث خطأ. حاول مرة أخرى.");
-    } finally {
-      setLoading(false);
-      setLoadMsg("");
+      setData({...analysis,indicators,mkt,closes,rsiArr});
+    }catch(err){
+      setError(err.message||"حدث خطأ. حاول مرة أخرى.");
+    }finally{
+      setLoading(false);setLoadMsg("");
     }
   }
 
-  // بيانات الرسم البياني الحقيقية
-  const pts = data?.mkt?.prices?.map((p,i) => ({
-    date:   p.date,
-    price:  p.close,
-    volume: p.volume,
-    rsi:    data.rsiArr?.[i] ? +data.rsiArr[i].toFixed(1) : 50,
-  })) || [];
+  const pts=data?.mkt?.prices?.map((p,i)=>({
+    date:p.date,price:p.close,volume:p.volume,
+    rsi:data.rsiArr?.[i]?+data.rsiArr[i].toFixed(1):50,
+  }))||[];
 
-  const rr = data ? (() => {
-    const r = Math.abs(data.entryPrice - data.stopLoss);
-    const w = Math.abs(data.target1 - data.entryPrice);
-    return r > 0 ? (w/r).toFixed(1) : "—";
-  })() : "—";
+  const rr=data?(()=>{const r=Math.abs(data.entryPrice-data.stopLoss);const w=Math.abs(data.target1-data.entryPrice);return r>0?(w/r).toFixed(1):"—";})():"—";
+  const mkt=data?.mkt;
+  const isLong=data?.direction==="long";
+  const chg=mkt?(mkt.currentPrice-mkt.previousClose):0;
+  const chgPct=mkt?.previousClose?(chg/mkt.previousClose*100):0;
+  const curRSI=data?.rsiArr?.[data.rsiArr.length-1];
+  const tt={background:"#1e293b",border:"1px solid rgba(99,179,237,0.2)",borderRadius:8,color:C.text2,fontSize:12};
 
-  const mkt     = data?.mkt;
-  const isLong  = data?.direction === "long";
-  const chg     = mkt ? (mkt.currentPrice - mkt.previousClose) : 0;
-  const chgPct  = mkt?.previousClose ? (chg/mkt.previousClose*100) : 0;
-  const curRSI  = data?.rsiArr?.[data.rsiArr.length-1];
-  const tt      = {background:"#1e293b",border:"1px solid rgba(99,179,237,0.2)",borderRadius:8,color:C.text2,fontSize:12};
-
-  return (
+  return(
     <div style={{background:C.bg,minHeight:"100vh",padding:"20px 16px 60px",fontFamily:"'Tajawal',Arial,sans-serif",direction:"rtl",color:C.text}}>
       <div style={{maxWidth:920,margin:"0 auto"}}>
 
         {/* HEADER */}
         <div style={{textAlign:"center",padding:"32px 0 26px"}}>
-          <div style={{display:"inline-flex",alignItems:"center",gap:8,background:C.bg2,border:"1px solid rgba(99,179,237,0.25)",borderRadius:50,padding:"7px 20px",marginBottom:18,fontSize:13,color:C.green2}}>
+          <div style={{display:"inline-flex",alignItems:"center",gap:8,background:C.bg2,border:"1px solid rgba(16,185,129,0.3)",borderRadius:50,padding:"7px 20px",marginBottom:18,fontSize:13,color:C.green2}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:C.green,display:"inline-block"}}/>
             أسعار مباشرة من السوق · تحليل بـ Claude AI
           </div>
-          <h1 style={{fontSize:32,fontWeight:900,marginBottom:8,background:"linear-gradient(135deg,#e2e8f0,#94a3b8)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>
-            محلل الأسهم الذكي Pro
-          </h1>
+          <h1 style={{fontSize:32,fontWeight:900,marginBottom:8,background:"linear-gradient(135deg,#e2e8f0,#94a3b8)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text"}}>محلل الأسهم الذكي Pro</h1>
           <p style={{fontSize:14,color:C.text2}}>أسعار حقيقية من Yahoo Finance · تحليل فني بالذكاء الاصطناعي</p>
         </div>
 
@@ -261,10 +169,8 @@ RSI الحالي: ${curRSI.toFixed(1)}
           <Lbl>🔑 مفتاح Anthropic API</Lbl>
           <div style={{display:"flex",gap:8}}>
             <input type="password" value={apiKey} onChange={e=>{setApiKey(e.target.value);setKeySaved(false);}} placeholder="sk-ant-api03-..." style={{...iStyle,flex:1}}/>
-            <button onClick={saveKey} style={{padding:"10px 16px",background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)",borderRadius:10,color:C.blue2,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
-              {keySaved?"✅ محفوظ":"💾 حفظ"}
-            </button>
-            {keySaved && <button onClick={clearKey} style={{padding:"10px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:10,color:C.red2,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🗑️</button>}
+            <button onClick={saveKey} style={{padding:"10px 16px",background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)",borderRadius:10,color:C.blue2,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{keySaved?"✅ محفوظ":"💾 حفظ"}</button>
+            {keySaved&&<button onClick={clearKey} style={{padding:"10px 14px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:10,color:C.red2,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>🗑️</button>}
           </div>
           <div style={{fontSize:11,color:C.text3,marginTop:6}}>احصل على مفتاحك من: console.anthropic.com/keys</div>
         </Card>
@@ -272,7 +178,7 @@ RSI الحالي: ${curRSI.toFixed(1)}
         {/* INPUTS */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
           <Card>
-            <Lbl>📈 رمز السهم (أمريكي)</Lbl>
+            <Lbl>📈 رمز السهم الأمريكي</Lbl>
             <input value={symbol} onChange={e=>setSymbol(e.target.value)} onKeyDown={e=>e.key==="Enter"&&analyze()} placeholder="AAPL · TSLA · NVDA · MSFT" style={iStyle}/>
           </Card>
           <Card>
@@ -286,31 +192,48 @@ RSI الحالي: ${curRSI.toFixed(1)}
           </Card>
         </div>
 
-        <button onClick={analyze} disabled={loading} style={{width:"100%",padding:15,background:loading?C.bg4:"linear-gradient(135deg,#10b981,#3b82f6)",color:"#fff",border:"none",borderRadius:14,fontSize:17,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:16,fontFamily:"inherit",boxShadow:loading?"none":"0 4px 24px rgba(16,185,129,0.25)",transition:"all .2s"}}>
-          {loading?"⏳ جاري جلب البيانات والتحليل...":"📡 جلب السعر الحقيقي وتحليل السهم"}
+        <button onClick={analyze} disabled={loading} style={{width:"100%",padding:15,background:loading?C.bg4:"linear-gradient(135deg,#10b981,#3b82f6)",color:"#fff",border:"none",borderRadius:14,fontSize:17,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:16,fontFamily:"inherit",boxShadow:loading?"none":"0 4px 24px rgba(16,185,129,0.25)"}}>
+          {loading?"⏳ "+loadMsg:"📡 جلب السعر الحقيقي وتحليل السهم"}
         </button>
 
-        {error && <div style={{padding:"13px 16px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,color:C.red2,fontSize:13,marginBottom:16}}>⚠️ {error}</div>}
+        {error&&<div style={{padding:"13px 16px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,color:C.red2,fontSize:13,marginBottom:16}}>⚠️ {error}</div>}
 
         {/* LOADING */}
-        {loading && (
+        {loading&&(
           <Card mb={16} style={{textAlign:"center",padding:"48px 20px"}}>
             <div style={{fontSize:38,marginBottom:14}}>📡</div>
-            <div style={{color:C.green2,fontSize:15,marginBottom:6,fontWeight:700}}>{loadMsg || "جاري المعالجة..."}</div>
-            <div style={{color:C.text3,fontSize:13,marginBottom:20}}>يرجى الانتظار</div>
+            <div style={{color:C.green2,fontSize:15,marginBottom:6,fontWeight:700}}>{loadMsg}</div>
             {STEPS.map((s,i)=>(
-              <div key={i} style={{fontSize:13,color:i<loadStep%5?C.green2:i===loadStep%5?C.blue2:C.text3,padding:"5px 0",transition:"color .3s",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                <span>{i<loadStep%5?"✅":i===loadStep%5?"⟳":"○"}</span>{s}
+              <div key={i} style={{fontSize:13,color:i<stepIdx%5?C.green2:i===stepIdx%5?C.blue2:C.text3,padding:"5px 0",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <span>{i<stepIdx%5?"✅":i===stepIdx%5?"⟳":"○"}</span>{s}
               </div>
             ))}
           </Card>
         )}
 
         {/* RESULTS */}
-        {data && mkt && (
+        {data&&mkt&&(
           <div ref={resultsRef}>
 
-            {/* LIVE BANNER */}
+            {/* NEWS / EARNINGS ALERT */}
+            {(data.hasNews||data.nextEarnings&&data.nextEarnings!=="unknown"&&data.nextEarnings!=="غير محدد")&&(
+              <div style={{marginBottom:12,display:"flex",flexDirection:"column",gap:8}}>
+                {data.hasNews&&data.newsDesc&&(
+                  <div style={{padding:"12px 16px",background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:12,color:C.amber,fontSize:13,display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:20}}>📰</span>
+                    <div><strong>خبر مهم:</strong> {data.newsDesc}</div>
+                  </div>
+                )}
+                {data.nextEarnings&&data.nextEarnings!=="unknown"&&data.nextEarnings!=="غير محدد"&&(
+                  <div style={{padding:"12px 16px",background:"rgba(139,92,246,0.1)",border:"1px solid rgba(139,92,246,0.3)",borderRadius:12,color:C.purple,fontSize:13,display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:20}}>📅</span>
+                    <div><strong>موعد إعلان الأرباح القادم:</strong> {data.nextEarnings}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* BANNER */}
             <Card mb={12} style={{padding:"24px 26px",background:"linear-gradient(135deg,rgba(16,185,129,0.06),rgba(59,130,246,0.06))",border:"1px solid rgba(16,185,129,0.2)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:14,marginBottom:18}}>
                 <div>
@@ -324,15 +247,11 @@ RSI الحالي: ${curRSI.toFixed(1)}
                   </div>
                 </div>
                 <div style={{textAlign:"left"}}>
-                  <div style={{fontSize:40,fontWeight:900,color:chg>=0?C.green2:C.red2}}>{mkt.currency==="USD"?"$":""}{fmt(mkt.currentPrice)}</div>
-                  <div style={{fontSize:15,fontWeight:700,color:chg>=0?C.green2:C.red2,marginTop:3}}>
-                    {chg>=0?"+":""}{fmt(chg)} ({chg>=0?"+":""}{fmt(chgPct)}%)
-                  </div>
-                  <div style={{fontSize:11,color:C.text3,marginTop:4}}>سعر حقيقي من Yahoo Finance</div>
+                  <div style={{fontSize:40,fontWeight:900,color:chg>=0?C.green2:C.red2}}>${fmt(mkt.currentPrice)}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:chg>=0?C.green2:C.red2,marginTop:3}}>{chg>=0?"+":""}{fmt(chg)} ({chg>=0?"+":""}{fmt(chgPct)}%)</div>
+                  <div style={{fontSize:11,color:C.text3,marginTop:4}}>سعر حقيقي · Yahoo Finance</div>
                 </div>
               </div>
-
-              {/* Stats */}
               <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:16}}>
                 {[
                   {l:"الإغلاق السابق",v:"$"+fmt(mkt.previousClose)},
@@ -347,8 +266,6 @@ RSI الحالي: ${curRSI.toFixed(1)}
                   </div>
                 ))}
               </div>
-
-              {/* Links */}
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {[
                   {label:"📊 TradingView",url:`https://www.tradingview.com/chart/?symbol=${mkt.symbol}`},
@@ -356,10 +273,7 @@ RSI الحالي: ${curRSI.toFixed(1)}
                   {label:"📰 Investing.com",url:`https://www.investing.com/search/?q=${mkt.symbol}`},
                   {label:"🏦 MarketWatch",url:`https://www.marketwatch.com/investing/stock/${mkt.symbol.toLowerCase()}`},
                 ].map((l,i)=>(
-                  <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
-                    style={{padding:"7px 14px",borderRadius:8,fontSize:12,fontWeight:600,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)",color:C.blue2,textDecoration:"none"}}>
-                    {l.label}
-                  </a>
+                  <a key={i} href={l.url} target="_blank" rel="noopener noreferrer" style={{padding:"7px 14px",borderRadius:8,fontSize:12,fontWeight:600,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.2)",color:C.blue2,textDecoration:"none"}}>{l.label}</a>
                 ))}
               </div>
             </Card>
@@ -401,10 +315,7 @@ RSI الحالي: ${curRSI.toFixed(1)}
             <Card mb={12}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
                 <div>
-                  <div style={{fontSize:15,fontWeight:700}}>
-                    الرسم البياني الحقيقي
-                    <span style={{fontSize:11,color:C.green2,marginRight:8,fontWeight:400}}>● بيانات حقيقية من Yahoo Finance</span>
-                  </div>
+                  <div style={{fontSize:15,fontWeight:700}}>الرسم البياني الحقيقي <span style={{fontSize:11,color:C.green2,fontWeight:400}}>● Yahoo Finance</span></div>
                   <div style={{display:"flex",gap:10,marginTop:8,flexWrap:"wrap"}}>
                     {[["#60a5fa","السعر"],["#34d399","دخول"],["#f87171","وقف"],["#8b5cf6","هدف1"],["#f59e0b","هدف2"]].map(([c,l])=>(
                       <div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.text2}}><div style={{width:18,height:2,background:c,borderRadius:1}}/>{l}</div>
@@ -417,9 +328,8 @@ RSI الحالي: ${curRSI.toFixed(1)}
                   ))}
                 </div>
               </div>
-
               <ResponsiveContainer width="100%" height={300}>
-                {chartMode==="price" ? (
+                {chartMode==="price"?(
                   <LineChart data={pts}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)"/>
                     <XAxis dataKey="date" tick={{fill:C.text3,fontSize:10}} interval="preserveStartEnd"/>
@@ -431,7 +341,7 @@ RSI الحالي: ${curRSI.toFixed(1)}
                     <ReferenceLine y={data.target2}    stroke="#f59e0b" strokeDasharray="4 3" strokeWidth={1.5} label={{value:"هدف2",fill:"#f59e0b",fontSize:10}}/>
                     <Line type="monotone" dataKey="price" stroke="#60a5fa" strokeWidth={2.5} dot={false} activeDot={{r:5}}/>
                   </LineChart>
-                ) : chartMode==="rsi" ? (
+                ):chartMode==="rsi"?(
                   <LineChart data={pts}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)"/>
                     <XAxis dataKey="date" tick={{fill:C.text3,fontSize:10}} interval="preserveStartEnd"/>
@@ -441,7 +351,7 @@ RSI الحالي: ${curRSI.toFixed(1)}
                     <ReferenceLine y={30} stroke="rgba(52,211,153,0.6)" strokeDasharray="5 5" label={{value:"30",fill:"#34d399",fontSize:10}}/>
                     <Line type="monotone" dataKey="rsi" stroke="#a78bfa" strokeWidth={2.5} dot={false}/>
                   </LineChart>
-                ) : (
+                ):(
                   <BarChart data={pts}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)"/>
                     <XAxis dataKey="date" tick={{fill:C.text3,fontSize:10}} interval="preserveStartEnd"/>
@@ -485,15 +395,16 @@ RSI الحالي: ${curRSI.toFixed(1)}
                 <div style={{padding:"10px 16px",borderRadius:10,background:"rgba(59,130,246,0.1)",border:"1px solid rgba(59,130,246,0.25)",color:C.blue2,fontSize:13,fontWeight:700}}>
                   📊 نسبة العائد/المخاطرة: 1 : {rr}
                 </div>
-                <div style={{padding:"10px 16px",borderRadius:10,background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.25)",color:C.green2,fontSize:13,fontWeight:700}}>
-                  📅 النتائج القادمة: {data.nextEarnings||"غير محدد"}
-                </div>
+                {data.nextEarnings&&data.nextEarnings!=="unknown"&&(
+                  <div style={{padding:"10px 16px",borderRadius:10,background:"rgba(139,92,246,0.1)",border:"1px solid rgba(139,92,246,0.25)",color:C.purple,fontSize:13,fontWeight:700}}>
+                    📅 الأرباح القادمة: {data.nextEarnings}
+                  </div>
+                )}
               </div>
             </Card>
 
             <div style={{fontSize:12,color:C.text3,padding:"14px 18px",border:"1px solid rgba(99,179,237,0.1)",borderRadius:10,textAlign:"center",lineHeight:1.8,background:C.bg2}}>
-              ⚠️ هذا التحليل لأغراض تعليمية فقط وليس توصية استثمارية أو مالية.<br/>
-              الأسعار مباشرة من Yahoo Finance — التحليل بـ Claude AI.
+              ⚠️ هذا التحليل لأغراض تعليمية فقط وليس توصية استثمارية أو مالية.
             </div>
           </div>
         )}
