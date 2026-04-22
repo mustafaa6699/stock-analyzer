@@ -146,16 +146,13 @@ RSI الحالي: ${curRSI.toFixed(1)}
   "riskLevel":"متوسط",
   "riskPct":50,
   "nextEarnings":"التاريخ أو غير محدد",
-  "indicators":[
-    {"name":"MA 20","value":"${ma20.toFixed(2)}","signal":"bull"},
-    {"name":"MA 50","value":"${ma50.toFixed(2)}","signal":"bull"},
-    {"name":"RSI","value":"${curRSI.toFixed(1)}","signal":"neutral"},
-    {"name":"MACD","value":"0.00","signal":"bull"},
-    {"name":"Bollinger","value":"وسط","signal":"neutral"},
-    {"name":"Stochastic","value":"50","signal":"neutral"},
-    {"name":"ATR","value":"0.00","signal":"neutral"},
-    {"name":"ADX","value":"25","signal":"bull"}
-  ],
+  "macdSignal":"bull",
+  "bollingerSignal":"neutral",
+  "stochasticValue":"50",
+  "stochasticSignal":"neutral",
+  "atrValue":"0.00",
+  "adxValue":"25",
+  "adxSignal":"bull",
   "expertAnalysis":"تحليل مفصل 5 جمل بناءً على البيانات الحقيقية أعلاه"
 }`;
 
@@ -187,13 +184,34 @@ RSI الحالي: ${curRSI.toFixed(1)}
       let jsonStr = raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/)?.[0];
       if (!jsonStr) throw new Error("تعذّر تحليل البيانات. حاول مرة أخرى.");
 
-      // تنظيف JSON
-      jsonStr = jsonStr.replace(/\/\/[^\n]*/g,"").replace(/,\s*([}\]])/g,"$1");
-      const analysis = JSON.parse(jsonStr);
+      // تنظيف JSON من أي نصوص عربية
+      jsonStr = jsonStr.replace(/\/\/[^\n]*/g,"");
+      jsonStr = jsonStr.replace(/\[([^\[\]]*([؀-ۿ])[^\[\]]*)\]/g,"[]");
+      jsonStr = jsonStr.replace(/,\s*([}\]])/g,"$1");
 
-      setData({ ...analysis, mkt, closes, rsiArr });
+      let analysis;
+      try { analysis = JSON.parse(jsonStr); }
+      catch(e) {
+        jsonStr = jsonStr.replace(/:\s*\[[^\]]*[؀-ۿ][^\]]*\]/g,": []");
+        try { analysis = JSON.parse(jsonStr); }
+        catch(e2) { throw new Error("تعذّر تحليل البيانات. حاول مرة أخرى."); }
+      }
 
-    } catch(err) {
+      // بناء المؤشرات من القيم المحسوبة مباشرة
+      const indicators = [
+        {name:"MA 20",     value:"$"+ma20.toFixed(2),   signal: mkt.currentPrice > ma20 ? "bull" : "bear"},
+        {name:"MA 50",     value:"$"+ma50.toFixed(2),   signal: mkt.currentPrice > ma50 ? "bull" : "bear"},
+        {name:"RSI (14)",  value:curRSI.toFixed(1),     signal: curRSI > 70 ? "bear" : curRSI < 30 ? "bull" : "neutral"},
+        {name:"MACD",      value:analysis.macdSignal==="bull"?"+إيجابي":"-سلبي", signal: analysis.macdSignal||"neutral"},
+        {name:"Bollinger", value:analysis.bollingerSignal==="bull"?"أعلى":analysis.bollingerSignal==="bear"?"أسفل":"وسط", signal: analysis.bollingerSignal||"neutral"},
+        {name:"Stochastic",value:String(analysis.stochasticValue||"50"), signal: analysis.stochasticSignal||"neutral"},
+        {name:"ATR",       value:String(analysis.atrValue||"—"), signal:"neutral"},
+        {name:"ADX",       value:String(analysis.adxValue||"—"), signal: analysis.adxSignal||"neutral"},
+      ];
+
+      setData({ ...analysis, indicators, mkt, closes, rsiArr });
+
+      } catch(err) {
       setError(err.message || "حدث خطأ. حاول مرة أخرى.");
     } finally {
       setLoading(false);
