@@ -94,18 +94,44 @@ export default function App(){
       const chg=mkt.currentPrice-mkt.previousClose;
       const chgPct=(chg/mkt.previousClose*100);
 
+      // حساب مستويات دعم ومقاومة من البيانات الحقيقية
+      const recentCloses=closes.slice(-20);
+      const support1=Math.min(...recentCloses).toFixed(2);
+      const support2=Math.min(...closes.slice(-50)).toFixed(2);
+      const resistance1=Math.max(...recentCloses).toFixed(2);
+      const resistance2=Math.max(...closes.slice(-50)).toFixed(2);
+      const atr=recentCloses.reduce((sum,v,i)=>i===0?sum:sum+Math.abs(v-recentCloses[i-1]),0)/(recentCloses.length-1);
+      const recentPrices=closes.slice(-10).map(p=>p.toFixed(2)).join(", ");
+
       setLoadMsg("Claude يحلل البيانات...");
 
-      // ── Prompt مبسط بالكامل بدون مصفوفات ──
-      const strat=strategy==="auto"?"choose the best strategy based on data":strategy;
-      const prompt=`You are an expert stock trader. Analyze ${sym} (${mkt.companyName}) with this REAL data:
-Price: ${mkt.currentPrice} | Change: ${chg.toFixed(2)} (${chgPct.toFixed(2)}%)
-High: ${mkt.dayHigh} | Low: ${mkt.dayLow} | 52w High: ${mkt.weekHigh52} | 52w Low: ${mkt.weekLow52}
-Volume: ${mkt.volumeM}M | MA20: ${ma20.toFixed(2)} | MA50: ${ma50.toFixed(2)} | RSI: ${curRSI.toFixed(1)}
-Strategy: ${strat}
+      // ── Prompt احترافي يحلل الشارت ──
+      const strat=strategy==="auto"?"choose the best strategy based on chart analysis":strategy;
+      const prompt=`You are a professional technical analyst and trader. Analyze ${sym} (${mkt.companyName}).
 
-Reply with ONLY valid JSON, no comments, no text outside JSON:
-{"direction":"long","strategyNameAr":"سوينج","entryPrice":0.00,"entryDesc":"reason","stopLoss":0.00,"stopDesc":"reason","target1":0.00,"target1Desc":"reason","target2":0.00,"target2Desc":"reason","rsiStatus":"محايد","volumeStatus":"متوسط","trendDirection":"صاعد","trendStrength":"متوسط","riskLevel":"متوسط","riskPct":50,"macdBull":true,"bollingerPos":"middle","stochastic":55,"adx":25,"nextEarnings":"date or unknown","hasNews":false,"newsDesc":"","expertAnalysis":"5 sentence analysis in Arabic based on real data above"}`;
+REAL MARKET DATA:
+- Current Price: ${mkt.currentPrice} | Change today: ${chg.toFixed(2)} (${chgPct.toFixed(2)}%)
+- Day Range: ${mkt.dayLow} - ${mkt.dayHigh}
+- 52-Week Range: ${mkt.weekLow52} - ${mkt.weekHigh52}
+- Volume: ${mkt.volumeM}M shares
+- MA20: ${ma20.toFixed(2)} | MA50: ${ma50.toFixed(2)}
+- RSI(14): ${curRSI.toFixed(1)}
+- ATR(20): ${atr.toFixed(2)}
+- Recent 10 closes: ${recentPrices}
+- Key Support levels: ${support1}, ${support2}
+- Key Resistance levels: ${resistance1}, ${resistance2}
+- Strategy requested: ${strat}
+
+CRITICAL RULES for entry price:
+1. NEVER use current price as entry - always find a better entry based on chart analysis
+2. For LONG: entry should be at or below a support level, or at a pullback zone
+3. For SHORT: entry should be at or above a resistance level, or at an overbought zone
+4. Stop loss must be based on ATR or key support/resistance levels
+5. Targets must be realistic based on chart levels and risk/reward minimum 1:2
+6. Think like a professional trader reading the chart, not just using current price
+
+Reply with ONLY valid JSON, no comments, no Arabic text as JSON values (use English for technical values):
+{"direction":"long","strategyNameAr":"سوينج","entryPrice":0.00,"entryDesc":"brief reason in Arabic","stopLoss":0.00,"stopDesc":"brief reason in Arabic","target1":0.00,"target1Desc":"brief reason in Arabic","target2":0.00,"target2Desc":"brief reason in Arabic","rsiStatus":"محايد","volumeStatus":"متوسط","trendDirection":"صاعد","trendStrength":"متوسط","riskLevel":"متوسط","riskPct":50,"macdBull":true,"bollingerPos":"middle","stochastic":55,"adx":25,"nextEarnings":"date or unknown","hasNews":false,"newsDesc":"","expertAnalysis":"Professional 5-sentence analysis in Arabic explaining WHY this entry is better than current price, key levels, and trading plan"}`;
 
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
