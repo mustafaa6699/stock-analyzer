@@ -136,6 +136,7 @@ JSON template (fill all values, keep field names exactly):
       if(!res.ok){const e=await res.json();throw new Error(e.error?.message||"API error");}
       const d=await res.json();
       const raw=d.content.map(i=>i.text||"").join("");
+      console.log("Claude raw response:", raw); // للتشخيص
       const analysis=safeJSON(raw);
 
       // بناء المؤشرات من القيم الحقيقية
