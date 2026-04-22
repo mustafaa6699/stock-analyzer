@@ -35,55 +35,15 @@ const calcRSI = (closes, period=14) => {
   return [...Array(closes.length-rsi.length).fill(50), ...rsi];
 };
 
-// جلب بيانات حقيقية عبر Yahoo Finance proxy
+// جلب بيانات حقيقية عبر Vercel API (يتجاوز CORS)
 async function fetchMarketData(symbol) {
-  const proxies = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1mo`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1mo`,
-  ];
-
-  let lastErr = null;
-  for (const url of proxies) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          "Accept": "application/json",
-          "User-Agent": "Mozilla/5.0",
-        },
-        mode: "cors",
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const result = json?.chart?.result?.[0];
-      if (!result) continue;
-
-      const meta   = result.meta;
-      const quotes = result.indicators?.quote?.[0];
-      const ts     = result.timestamp || [];
-
-      const prices = ts.map((t, i) => ({
-        date:   new Date(t*1000).toLocaleDateString("en",{month:"numeric",day:"numeric"}),
-        close:  quotes.close?.[i]  ? +quotes.close[i].toFixed(2)  : null,
-        volume: quotes.volume?.[i] ? +(quotes.volume[i]/1e6).toFixed(2) : 0,
-      })).filter(p => p.close !== null);
-
-      return {
-        symbol:        meta.symbol,
-        companyName:   meta.longName || meta.shortName || symbol,
-        currentPrice:  meta.regularMarketPrice,
-        previousClose: meta.previousClose || meta.chartPreviousClose,
-        dayHigh:       meta.regularMarketDayHigh,
-        dayLow:        meta.regularMarketDayLow,
-        weekHigh52:    meta.fiftyTwoWeekHigh,
-        weekLow52:     meta.fiftyTwoWeekLow,
-        marketCapB:    meta.marketCap ? (meta.marketCap/1e9).toFixed(1) : "—",
-        volumeM:       meta.regularMarketVolume ? (meta.regularMarketVolume/1e6).toFixed(1) : "—",
-        currency:      meta.currency || "USD",
-        prices,
-      };
-    } catch(e) { lastErr = e; }
+  const url = `/api/stock?symbol=${symbol}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const e = await res.json();
+    throw new Error(e.error || `لم نتمكن من جلب بيانات ${symbol}`);
   }
-  throw new Error(`لم نتمكن من جلب بيانات ${symbol}. تحقق من الرمز أو اتصال الإنترنت.`);
+  return await res.json();
 }
 
 const STEPS = [
