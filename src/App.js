@@ -33,16 +33,19 @@ async function fetchMarketData(symbol) {
 
 function safeJSON(raw) {
   let s = raw.replace(/```json|```/g,"").trim();
-  const m = s.match(/\{[\s\S]*\}/);
-  if(!m) throw new Error("no JSON");
-  s = m[0];
-  // Remove single-line comments
+  const start = s.indexOf("{");
+  const end   = s.lastIndexOf("}");
+  if(start===-1||end===-1) throw new Error("لم يرجع Claude بيانات صحيحة. حاول مرة أخرى.");
+  s = s.slice(start, end+1);
   s = s.replace(/\/\/[^\n\r]*/g,"");
-  // Remove Arabic text inside arrays (common Claude mistake)
-  s = s.replace(/\[\s*[^\[\]"0-9\-\.true false,\s][^\[\]]*\]/g,"[]");
-  // Fix trailing commas
   s = s.replace(/,(\s*[}\]])/g,"$1");
-  return JSON.parse(s);
+  try {
+    return JSON.parse(s);
+  } catch(e1) {
+    s = s.replace(/:\s*\[[^\]]*\]/g,": []");
+    try { return JSON.parse(s); }
+    catch(e2) { throw new Error("خطأ في تحليل البيانات. حاول مرة أخرى."); }
+  }
 }
 
 const STEPS=["① جلب السعر الحقيقي من السوق","② تحليل البيانات التاريخية","③ حساب المؤشرات الفنية","④ إعداد توصية الخبير"];
@@ -105,33 +108,20 @@ export default function App(){
 
       setLoadMsg("Claude يحلل البيانات...");
 
-      // ── Prompt احترافي يحلل الشارت ──
-      const strat=strategy==="auto"?"choose the best strategy based on chart analysis":strategy;
-      const prompt=`You are a professional technical analyst and trader. Analyze ${sym} (${mkt.companyName}).
+      // ── Prompt احترافي مبسط ──
+      const strat=strategy==="auto"?"auto-select best strategy":strategy;
+      const prompt=`Analyze stock ${sym} as a professional trader. Return ONLY a JSON object.
 
-REAL MARKET DATA:
-- Current Price: ${mkt.currentPrice} | Change today: ${chg.toFixed(2)} (${chgPct.toFixed(2)}%)
-- Day Range: ${mkt.dayLow} - ${mkt.dayHigh}
-- 52-Week Range: ${mkt.weekLow52} - ${mkt.weekHigh52}
-- Volume: ${mkt.volumeM}M shares
-- MA20: ${ma20.toFixed(2)} | MA50: ${ma50.toFixed(2)}
-- RSI(14): ${curRSI.toFixed(1)}
-- ATR(20): ${atr.toFixed(2)}
-- Recent 10 closes: ${recentPrices}
-- Key Support levels: ${support1}, ${support2}
-- Key Resistance levels: ${resistance1}, ${resistance2}
-- Strategy requested: ${strat}
+Data: price=${mkt.currentPrice}, high=${mkt.dayHigh}, low=${mkt.dayLow}, MA20=${ma20.toFixed(2)}, MA50=${ma50.toFixed(2)}, RSI=${curRSI.toFixed(1)}, ATR=${atr.toFixed(2)}, support=${support1}, resistance=${resistance1}, strategy=${strat}
 
-CRITICAL RULES for entry price:
-1. NEVER use current price as entry - always find a better entry based on chart analysis
-2. For LONG: entry should be at or below a support level, or at a pullback zone
-3. For SHORT: entry should be at or above a resistance level, or at an overbought zone
-4. Stop loss must be based on ATR or key support/resistance levels
-5. Targets must be realistic based on chart levels and risk/reward minimum 1:2
-6. Think like a professional trader reading the chart, not just using current price
+Rules:
+- entryPrice must NOT equal current price. Use support/resistance for better entry
+- stopLoss based on ATR or key level below entry
+- target1 and target2 based on resistance levels, min R:R = 1:2
+- expertAnalysis in Arabic, explain entry logic and key levels
 
-Reply with ONLY valid JSON, no comments, no Arabic text as JSON values (use English for technical values):
-{"direction":"long","strategyNameAr":"سوينج","entryPrice":0.00,"entryDesc":"brief reason in Arabic","stopLoss":0.00,"stopDesc":"brief reason in Arabic","target1":0.00,"target1Desc":"brief reason in Arabic","target2":0.00,"target2Desc":"brief reason in Arabic","rsiStatus":"محايد","volumeStatus":"متوسط","trendDirection":"صاعد","trendStrength":"متوسط","riskLevel":"متوسط","riskPct":50,"macdBull":true,"bollingerPos":"middle","stochastic":55,"adx":25,"nextEarnings":"date or unknown","hasNews":false,"newsDesc":"","expertAnalysis":"Professional 5-sentence analysis in Arabic explaining WHY this entry is better than current price, key levels, and trading plan"}`;
+JSON template (fill all values, keep field names exactly):
+{"direction":"long","strategyNameAr":"سوينج","entryPrice":1.0,"entryDesc":"Arabic reason","stopLoss":1.0,"stopDesc":"Arabic reason","target1":1.0,"target1Desc":"Arabic reason","target2":1.0,"target2Desc":"Arabic reason","rsiStatus":"محايد","volumeStatus":"متوسط","trendDirection":"صاعد","trendStrength":"متوسط","riskLevel":"متوسط","riskPct":50,"macdBull":true,"bollingerPos":"middle","stochastic":55,"adx":25,"nextEarnings":"unknown","hasNews":false,"newsDesc":"","expertAnalysis":"Arabic analysis here"}`;
 
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
