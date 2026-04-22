@@ -126,7 +126,12 @@ JSON template (fill all values, keep field names exactly):
       const res=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":apiKey.trim(),"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6",
+          max_tokens:1200,
+          system:"You are a trading analyst. You ONLY respond with a valid JSON object. Never add any text before or after the JSON. Start your response directly with { and end with }",
+          messages:[{role:"user",content:prompt}]
+        })
       });
       if(!res.ok){const e=await res.json();throw new Error(e.error?.message||"API error");}
       const d=await res.json();
